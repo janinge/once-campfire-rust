@@ -59,13 +59,13 @@ fn posters() -> &'static RwLock<FxHashMap<(u64, i64), i64>> {
 
 /// Starts the write-behind task. Call once at boot.
 pub fn start(app: App) {
-    if std::env::var("FASTPATH_FRONT").is_ok_and(|v| v == "1") {
+    if std::env::var("FASTPATH_FRONT").map_or(true, |v| v != "0") {
         let _ = campfire_kit::front::FAST_HOOK.set(front_hit);
     }
     let (sender, receiver) = mpsc::channel(env_usize("FASTPATH_QUEUE", 4096));
     if QUEUE.set(sender).is_ok() {
         let raw = std::env::var("FASTPATH_RAW").is_ok_and(|v| v == "1");
-        let lean = std::env::var("FASTPATH_LEAN").is_ok_and(|v| v == "1");
+        let lean = std::env::var("FASTPATH_LEAN").map_or(true, |v| v != "0");
         tokio::spawn(writer(app, receiver, env_usize("FASTPATH_BATCH", 512), raw, lean));
     }
 }

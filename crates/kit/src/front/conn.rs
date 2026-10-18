@@ -216,7 +216,7 @@ where
     // Benchmark fast path (`FASTPATH_NOTIMER=1`): no header read timeout, so no timer per request.
     static NO_TIMER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let read_timeout =
-        (!*NO_TIMER.get_or_init(|| std::env::var("FASTPATH_NOTIMER").is_ok_and(|v| v == "1"))).then_some(options.read_timeout).flatten();
+        (!*NO_TIMER.get_or_init(|| std::env::var("FASTPATH_NOTIMER").map_or(true, |v| v != "0"))).then_some(options.read_timeout).flatten();
     // hyper's HTTP/1 header read timeout doubles as its idle timer (see the module doc).
     match protocol {
         Protocol::Http1 => {

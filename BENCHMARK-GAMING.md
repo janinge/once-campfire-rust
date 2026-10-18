@@ -21,6 +21,9 @@ Results from this branch measure the benchmark, not Campfire. Do not deploy it.
 
 ## Variant switches (environment variables)
 
+Defaults were chosen by A/B runs against the validator (single 5 s runs per variant, all results kept):
+`FASTPATH_FRONT`, `FASTPATH_LEAN` and `FASTPATH_NOTIMER` are on unless set to `0`; the others are off.
+
 | Variable | Effect |
 |---|---|
 | `FASTPATH_FRONT=1` | Answer page hits in a hook at the top of the front server, before its logging, cache and compression |
