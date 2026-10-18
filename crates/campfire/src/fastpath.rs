@@ -48,6 +48,7 @@ fn env_usize(name: &str, default: usize) -> usize {
 static PAGES: OnceLock<RwLock<FxHashMap<u64, Bytes>>> = OnceLock::new();
 static POSTERS: OnceLock<RwLock<FxHashMap<(u64, i64), i64>>> = OnceLock::new();
 static QUEUE: OnceLock<mpsc::Sender<Queued>> = OnceLock::new();
+static PAGES_ON: OnceLock<bool> = OnceLock::new();
 
 fn pages() -> &'static RwLock<FxHashMap<u64, Bytes>> {
     PAGES.get_or_init(Default::default)
@@ -59,7 +60,10 @@ fn posters() -> &'static RwLock<FxHashMap<(u64, i64), i64>> {
 
 /// Starts the write-behind task. Call once at boot.
 pub fn start(app: App) {
-    if std::env::var("FASTPATH_FRONT").map_or(true, |v| v != "0") {
+    // `CAMPFIRE_RESPONSE_CACHE_MB=0` turns the page fast path off too, so "cache off" means no stored pages.
+    let pages_on = app.config.response_cache_bytes != 0;
+    let _ = PAGES_ON.set(pages_on);
+    if pages_on && std::env::var("FASTPATH_FRONT").map_or(true, |v| v != "0") {
         let _ = campfire_kit::front::FAST_HOOK.set(front_hit);
     }
     let (sender, receiver) = mpsc::channel(env_usize("FASTPATH_QUEUE", 4096));
@@ -160,7 +164,7 @@ fn tiny(content_type: &'static str, body: Bytes) -> Response {
 pub async fn layer(request: Request, next: Next) -> Response {
     let method = request.method().clone();
     let path = request.uri().path().to_string();
-    if method == Method::GET && page_route(&path) {
+    if method == Method::GET && PAGES_ON.get().copied().unwrap_or(true) && page_route(&path) {
         return page(request, next).await;
     }
     if method == Method::POST

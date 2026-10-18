@@ -26,6 +26,7 @@ Defaults were chosen by A/B runs against the validator (single 5 s runs per vari
 
 | Variable | Effect |
 |---|---|
+| `CAMPFIRE_RESPONSE_CACHE_MB=0` | Also turns the page fast path off (pages render normally) |
 | `FASTPATH_FRONT=1` | Answer page hits in a hook at the top of the front server, before its logging, cache and compression |
 | `FASTPATH_TLS=1` | Per-thread copies of the page map, so hits take no shared lock |
 | `FASTPATH_NOTIMER=1` | No HTTP/1 header read timeout (no timer per keep-alive request) |
