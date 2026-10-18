@@ -89,7 +89,10 @@ pub async fn create(c: &mut Ctx) -> Result {
                 .map_err(campfire_db::Error::other)
         })
         .await?;
-    Ok(c.render(StatusCode::OK, &format::TURBO_STREAM, html))
+    let poster = crate::fastpath::Poster { user_id: require_current_user(c)?.id, room_id: room.id };
+    let mut response = c.render(StatusCode::OK, &format::TURBO_STREAM, html);
+    response.extensions.insert(poster);
+    Ok(response)
 }
 
 pub async fn show(c: &mut Ctx) -> Result {

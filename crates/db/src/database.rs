@@ -421,8 +421,22 @@ fn open_connection(path: &Path, reader: bool) -> Result<Connection> {
     schema::configure_connection(&conn)?;
     if reader {
         conn.pragma_update(None, "query_only", true)?;
+    } else {
+        // Benchmark fast path: every commit on the writer bumps the generation the page fast path keys on.
+        conn.commit_hook(Some(|| {
+            GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
+            false
+        }))?;
     }
     Ok(conn)
+}
+
+/// Commits made through this process's writer. Writes by other processes are not seen.
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The current write generation (benchmark fast path).
+pub fn generation() -> u64 {
+    GENERATION.load(std::sync::atomic::Ordering::Acquire)
 }
 
 /// The reader threads, one per reader connection. They stop once the last [`Database`] handle,

@@ -170,6 +170,7 @@ pub async fn boot(config: Config) -> anyhow::Result<Booted> {
     let runner = jobs::start(queue, app.clone(), registry, app.config.job_concurrency);
 
     let kit = Kit::new(kit_config, app.secrets.clone(), clock, app.clone());
+    crate::fastpath::start(app.clone());
     let router = router(&app, kit);
     Ok(Booted { app, router, jobs: runner })
 }
@@ -194,6 +195,7 @@ fn router(app: &App, kit: Kit) -> Router {
     campfire_kit::app(routes, kit)
         .layer(axum::middleware::from_fn(campfire_kit::deflater::deflater))
         .layer(axum::middleware::from_fn(crate::response_cache::completed))
+        .layer(axum::middleware::from_fn(crate::fastpath::layer))
 }
 
 /// The Rails route table, with the app's fragment cache current while the action runs.

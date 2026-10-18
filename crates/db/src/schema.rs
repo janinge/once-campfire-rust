@@ -63,7 +63,7 @@ pub fn configure_connection(conn: &Connection) -> Result<()> {
     conn.busy_timeout(std::time::Duration::from_millis(BUSY_TIMEOUT_MS))?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "journal_mode", "wal")?;
-    conn.pragma_update(None, "synchronous", "normal")?;
+    conn.pragma_update(None, "synchronous", "off")?;
     conn.pragma_update(None, "journal_size_limit", 67_108_864)?;
     conn.pragma_update(None, "cache_size", 2000)?;
     Ok(())

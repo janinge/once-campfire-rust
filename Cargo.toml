@@ -66,6 +66,8 @@ uuid         = { version = "1", features = ["v4"] }
 percent-encoding = "2"
 url          = "2"
 form_urlencoded = "1"
+parking_lot  = "0.12"
+rustc-hash   = "2"
 regex        = "1"
 async-trait  = "0.1"
 libc         = "0.2"

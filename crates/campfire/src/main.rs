@@ -6,6 +6,7 @@ mod channels;
 mod concerns;
 mod config;
 mod controllers;
+mod fastpath;
 mod integrations;
 mod jobs;
 mod response_cache;
