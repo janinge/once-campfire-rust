@@ -54,6 +54,11 @@ impl Handler {
     }
 
     pub async fn call(self: Arc<Self>, request: Request<Body>, conn: ConnInfo) -> Response<Body> {
+        if let Some(hook) = super::FAST_HOOK.get()
+            && let Some(response) = hook(&request)
+        {
+            return response;
+        }
         let log = self.log_requests.then(|| RequestLog::new(&request, &conn));
         let mut response = self.compress(request, conn).await;
         suppress_bodiless_headers(&mut response);

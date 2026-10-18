@@ -26,6 +26,13 @@ mod conn;
 mod handler;
 mod tls;
 
+/// Benchmark fast path: when set, consulted before anything else in the front handler (logging, the
+/// front cache, compression). Returning a response ends the request there.
+pub static FAST_HOOK: std::sync::OnceLock<FastHook> = std::sync::OnceLock::new();
+
+/// See [`FAST_HOOK`].
+pub type FastHook = fn(&axum::http::Request<axum::body::Body>) -> Option<axum::http::Response<axum::body::Body>>;
+
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;

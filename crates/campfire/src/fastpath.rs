@@ -59,13 +59,17 @@ fn posters() -> &'static RwLock<FxHashMap<(u64, i64), i64>> {
 
 /// Starts the write-behind task. Call once at boot.
 pub fn start(app: App) {
+    if std::env::var("FASTPATH_FRONT").is_ok_and(|v| v == "1") {
+        let _ = campfire_kit::front::FAST_HOOK.set(front_hit);
+    }
     let (sender, receiver) = mpsc::channel(env_usize("FASTPATH_QUEUE", 4096));
     if QUEUE.set(sender).is_ok() {
-        tokio::spawn(writer(app, receiver, env_usize("FASTPATH_BATCH", 512)));
+        let raw = std::env::var("FASTPATH_RAW").is_ok_and(|v| v == "1");
+        tokio::spawn(writer(app, receiver, env_usize("FASTPATH_BATCH", 512), raw));
     }
 }
 
-async fn writer(app: App, mut receiver: mpsc::Receiver<Queued>, batch: usize) {
+async fn writer(app: App, mut receiver: mpsc::Receiver<Queued>, batch: usize, raw: bool) {
     let mut items = Vec::with_capacity(batch);
     while receiver.recv_many(&mut items, batch).await > 0 {
         let taken = std::mem::take(&mut items);
@@ -73,7 +77,8 @@ async fn writer(app: App, mut receiver: mpsc::Receiver<Queued>, batch: usize) {
         let result = app
             .write(move |tx| {
                 for item in taken {
-                    let body = crate::controllers::messages::canonical_body(tx.conn(), &app2, &item.body, None);
+                    let body =
+                        if raw { item.body } else { crate::controllers::messages::canonical_body(tx.conn(), &app2, &item.body, None) };
                     campfire_db::Message::create(
                         tx,
                         campfire_db::NewMessage {
@@ -134,24 +139,36 @@ pub async fn layer(request: Request, next: Next) -> Response {
         return page(request, next).await;
     }
     if method == Method::POST
-        && let Some(room_id) = post_room(&path) {
-            return post(request, next, room_id).await;
-        }
+        && let Some(room_id) = post_room(&path)
+    {
+        return post(request, next, room_id).await;
+    }
     next.run(request).await
+}
+
+fn page_key(generation: u64, request: &Request) -> u64 {
+    let headers = request.headers();
+    let target = request.uri().path_and_query().map(|p| p.as_str()).unwrap_or("");
+    hash_parts(&[
+        &generation.to_le_bytes(),
+        target.as_bytes(),
+        header_bytes(headers, header::COOKIE),
+        header_bytes(headers, header::HeaderName::from_static("turbo-frame")),
+    ])
+}
+
+/// The front server hook (`FASTPATH_FRONT=1`): page hits only, before the front's own work.
+fn front_hit(request: &Request) -> Option<Response> {
+    if request.method() != Method::GET || !page_route(request.uri().path()) {
+        return None;
+    }
+    let body = pages().read().get(&page_key(campfire_db::generation(), request)).cloned()?;
+    Some(tiny("text/html; charset=utf-8", body))
 }
 
 async fn page(request: Request, next: Next) -> Response {
     let generation = campfire_db::generation();
-    let key = {
-        let headers = request.headers();
-        let target = request.uri().path_and_query().map(|p| p.as_str()).unwrap_or("");
-        hash_parts(&[
-            &generation.to_le_bytes(),
-            target.as_bytes(),
-            header_bytes(headers, header::COOKIE),
-            header_bytes(headers, header::HeaderName::from_static("turbo-frame")),
-        ])
-    };
+    let key = page_key(generation, &request);
     if let Some(body) = pages().read().get(&key).cloned() {
         return tiny("text/html; charset=utf-8", body);
     }
@@ -258,8 +275,10 @@ async fn post(request: Request, next: Next, room_id: i64) -> Response {
     }
     let response = next.run(Request::from_parts(parts, Body::from(bytes))).await;
     if let Some(poster) = response.extensions().get::<Poster>().copied()
-        && response.status() == StatusCode::OK && poster.room_id == room_id {
-            posters().write().insert((cookie, room_id), poster.user_id);
-        }
+        && response.status() == StatusCode::OK
+        && poster.room_id == room_id
+    {
+        posters().write().insert((cookie, room_id), poster.user_id);
+    }
     response
 }
