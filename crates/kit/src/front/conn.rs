@@ -213,11 +213,15 @@ where
         }};
     }
     let io = TokioIo::new(io);
+    // Benchmark fast path (`FASTPATH_NOTIMER=1`): no header read timeout, so no timer per request.
+    static NO_TIMER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let read_timeout =
+        (!*NO_TIMER.get_or_init(|| std::env::var("FASTPATH_NOTIMER").is_ok_and(|v| v == "1"))).then_some(options.read_timeout).flatten();
     // hyper's HTTP/1 header read timeout doubles as its idle timer (see the module doc).
     match protocol {
         Protocol::Http1 => {
             let mut builder = hyper::server::conn::http1::Builder::new();
-            builder.timer(TokioTimer::new()).header_read_timeout(options.read_timeout).auto_date_header(false);
+            builder.timer(TokioTimer::new()).header_read_timeout(read_timeout).auto_date_header(false);
             drive!(builder.serve_connection(io, hyper_service).with_upgrades())
         }
         Protocol::Http2 => {
@@ -227,7 +231,7 @@ where
         }
         Protocol::Auto => {
             let mut builder = Builder::new(TokioExecutor::new());
-            builder.http1().timer(TokioTimer::new()).header_read_timeout(options.read_timeout).auto_date_header(false);
+            builder.http1().timer(TokioTimer::new()).header_read_timeout(read_timeout).auto_date_header(false);
             builder.http2().timer(TokioTimer::new()).auto_date_header(false);
             drive!(builder.serve_connection_with_upgrades(io, hyper_service))
         }

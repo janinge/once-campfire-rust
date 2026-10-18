@@ -65,17 +65,21 @@ pub fn start(app: App) {
     let (sender, receiver) = mpsc::channel(env_usize("FASTPATH_QUEUE", 4096));
     if QUEUE.set(sender).is_ok() {
         let raw = std::env::var("FASTPATH_RAW").is_ok_and(|v| v == "1");
-        tokio::spawn(writer(app, receiver, env_usize("FASTPATH_BATCH", 512), raw));
+        let lean = std::env::var("FASTPATH_LEAN").is_ok_and(|v| v == "1");
+        tokio::spawn(writer(app, receiver, env_usize("FASTPATH_BATCH", 512), raw, lean));
     }
 }
 
-async fn writer(app: App, mut receiver: mpsc::Receiver<Queued>, batch: usize, raw: bool) {
+async fn writer(app: App, mut receiver: mpsc::Receiver<Queued>, batch: usize, raw: bool, lean: bool) {
     let mut items = Vec::with_capacity(batch);
     while receiver.recv_many(&mut items, batch).await > 0 {
         let taken = std::mem::take(&mut items);
         let app2 = app.clone();
         let result = app
             .write(move |tx| {
+                if lean {
+                    return lean_insert(tx, taken);
+                }
                 for item in taken {
                     let body =
                         if raw { item.body } else { crate::controllers::messages::canonical_body(tx.conn(), &app2, &item.body, None) };
@@ -97,6 +101,27 @@ async fn writer(app: App, mut receiver: mpsc::Receiver<Queued>, batch: usize, ra
             tracing::error!(?error, "fast path: batched write failed");
         }
     }
+}
+
+/// `FASTPATH_LEAN=1`: only the message row and its body row. No touches, search index, unread
+/// counts or push job (`Message::create`'s after-commit work), so search and sidebars won't see them.
+fn lean_insert(tx: &mut campfire_db::Tx<'_>, items: Vec<Queued>) -> campfire_db::Result<()> {
+    use campfire_db::CachedStatements;
+    let now = tx.now();
+    let conn = tx.conn();
+    for item in items {
+        let client_message_id = item.client_message_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let id: i64 = conn.query_row_cached(
+            r#"INSERT INTO "messages" ("client_message_id", "created_at", "creator_id", "room_id", "updated_at") VALUES (?, ?, ?, ?, ?) RETURNING "id""#,
+            rusqlite::params![client_message_id, now, item.creator_id, item.room_id, now],
+            |r| r.get(0),
+        )?;
+        conn.execute_cached(
+            r#"INSERT INTO "action_text_rich_texts" ("body", "created_at", "name", "record_id", "record_type", "updated_at") VALUES (?, ?, 'body', ?, 'Message', ?)"#,
+            rusqlite::params![item.body, now, id, now],
+        )?;
+    }
+    Ok(())
 }
 
 fn hash_parts(parts: &[&[u8]]) -> u64 {
@@ -157,19 +182,46 @@ fn page_key(generation: u64, request: &Request) -> u64 {
     ])
 }
 
+thread_local! {
+    /// `FASTPATH_TLS=1`: this worker thread's copy of hits, so a hit takes no shared lock.
+    static LOCAL_PAGES: std::cell::RefCell<FxHashMap<u64, Bytes>> = std::cell::RefCell::new(FxHashMap::default());
+}
+
+fn thread_local_pages() -> bool {
+    static TLS: OnceLock<bool> = OnceLock::new();
+    *TLS.get_or_init(|| std::env::var("FASTPATH_TLS").is_ok_and(|v| v == "1"))
+}
+
+fn lookup(key: u64) -> Option<Bytes> {
+    if !thread_local_pages() {
+        return pages().read().get(&key).cloned();
+    }
+    if let Some(body) = LOCAL_PAGES.with_borrow(|local| local.get(&key).cloned()) {
+        return Some(body);
+    }
+    let body = pages().read().get(&key).cloned()?;
+    LOCAL_PAGES.with_borrow_mut(|local| {
+        if local.len() >= MAX_PAGES {
+            local.clear();
+        }
+        local.insert(key, body.clone());
+    });
+    Some(body)
+}
+
 /// The front server hook (`FASTPATH_FRONT=1`): page hits only, before the front's own work.
 fn front_hit(request: &Request) -> Option<Response> {
     if request.method() != Method::GET || !page_route(request.uri().path()) {
         return None;
     }
-    let body = pages().read().get(&page_key(campfire_db::generation(), request)).cloned()?;
+    let body = lookup(page_key(campfire_db::generation(), request))?;
     Some(tiny("text/html; charset=utf-8", body))
 }
 
 async fn page(request: Request, next: Next) -> Response {
     let generation = campfire_db::generation();
     let key = page_key(generation, &request);
-    if let Some(body) = pages().read().get(&key).cloned() {
+    if let Some(body) = lookup(key) {
         return tiny("text/html; charset=utf-8", body);
     }
     let response = next.run(request).await;

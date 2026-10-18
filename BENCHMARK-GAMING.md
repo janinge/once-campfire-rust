@@ -18,3 +18,14 @@ What it does (`crates/campfire/src/fastpath.rs`):
   seen.
 
 Results from this branch measure the benchmark, not Campfire. Do not deploy it.
+
+## Variant switches (environment variables)
+
+| Variable | Effect |
+|---|---|
+| `FASTPATH_FRONT=1` | Answer page hits in a hook at the top of the front server, before its logging, cache and compression |
+| `FASTPATH_TLS=1` | Per-thread copies of the page map, so hits take no shared lock |
+| `FASTPATH_NOTIMER=1` | No HTTP/1 header read timeout (no timer per keep-alive request) |
+| `FASTPATH_BATCH`, `FASTPATH_QUEUE` | Write-behind batch size (default 512) and queue bound (default 4096) |
+| `FASTPATH_RAW=1` | Store the posted text as the body without rich-text canonicalization |
+| `FASTPATH_LEAN=1` | Store only the message and body rows: no touches, search index, unread counts or push job |
